@@ -8,10 +8,29 @@ const locationRoutes = require('./routes/locations');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS configuration untuk production
+// CORS configuration - Allow multiple origins
+const allowedOrigins = [
+    'https://hilmibotak.github.io',
+    'http://localhost:5500',
+    'http://127.0.0.1:5500',
+    process.env.FRONTEND_URL
+].filter(Boolean);
+
 const corsOptions = {
-    origin: process.env.FRONTEND_URL || '*',
+    origin: function (origin, callback) {
+        // Allow requests with no origin (Postman, mobile apps, etc.)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+            callback(null, true);
+        } else {
+            // Allow all origins for now, or restrict later
+            callback(null, true);
+        }
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     optionsSuccessStatus: 200
 };
 
@@ -19,51 +38,59 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// Logging middleware
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+    next();
+});
+
 // Connect to MongoDB
-let cachedDb = null;
-const connectDB = async () => {
-    if (cachedDb) {
-        return cachedDb;
-    }
-    
-    try {
-        const conn = await mongoose.connect(process.env.MONGO_URI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 5000,
-        });
-        cachedDb = conn;
-        console.log('Connected to MongoDB');
-        return conn;
-    } catch (err) {
-        console.error('MongoDB connection error:', err);
-        throw err;
-    }
-};
+mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => console.log('✅ Connected to MongoDB'))
+.catch(err => console.error('❌ MongoDB connection error:', err));
 
 // Root endpoint
 app.get('/', (req, res) => {
-    res.json({ message: 'Leaflet Backend API', status: 'running' });
+    res.json({ 
+        message: 'Leaflet Backend API', 
+        status: 'running',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'ok',
+        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // Routes
 app.use('/api/locations', locationRoutes);
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ message: 'Something went wrong!', error: err.message });
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({ message: 'Route not found' });
 });
 
-// Connect to DB dan start server (untuk local development)
-if (process.env.NODE_ENV !== 'production') {
-    connectDB().then(() => {
-        app.listen(PORT, () => {
-            console.log(`Server running on port ${PORT}`);
-        });
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('❌ Error:', err.stack);
+    res.status(500).json({ 
+        message: 'Something went wrong!', 
+        error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message 
     });
-}
+});
 
-// Export untuk Vercel serverless
+// Start server
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+});
+
 module.exports = app;
-module.exports.connectDB = connectDB;
